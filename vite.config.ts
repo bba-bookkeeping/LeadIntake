@@ -12,4 +12,6 @@ export default defineConfig({
   tanstackStart: {
     server: { entry: "server" },
   },
+  // Force the Cloudflare/nitro deploy step outside the Lovable sandbox (e.g. local or CI builds).
+  nitro: true,
 });
