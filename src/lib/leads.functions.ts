@@ -347,7 +347,7 @@ async function createClickUpTask(lead: LeadInput): Promise<{ id?: string; error?
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          name: `New lead: ${lead.name} — ${lead.company}`,
+          name: `${lead.name} — ${lead.company}`,
           markdown_description: buildTaskDescription(lead),
           tags: ["lead", "website"],
           priority: 3,
@@ -366,16 +366,69 @@ async function createClickUpTask(lead: LeadInput): Promise<{ id?: string; error?
   }
 }
 
+async function notifySlackNewLead(
+  lead: LeadInput,
+  taskId: string | undefined,
+): Promise<string | undefined> {
+  const token = process.env.SLACK_BOT_TOKEN;
+  const channel = process.env.SLACK_NEW_LEADS_CHANNEL;
+  if (!token || !channel) return undefined; // soft-disabled when either unset
+
+  const taskUrl = taskId
+    ? `https://app.clickup.com/t/${encodeURIComponent(taskId)}`
+    : undefined;
+
+  const text = [
+    `🆕 *New lead:* ${lead.name} — ${lead.company}`,
+    `📧 ${lead.email}`,
+    `🏭 ${lead.industry}${lead.software ? ` • ${lead.software}` : ""}`,
+    `💰 ${lead.revenue}`,
+    `🎯 ${lead.services.join(", ")}`,
+    `📈 ${lead.stage}`,
+    "",
+    `*Why a bookkeeper?* ${lead.whyBookkeeper}`,
+    lead.stressors ? `*Top stressors:* ${lead.stressors}` : "",
+    lead.referral ? `*Referral:* ${lead.referral}` : "",
+    taskUrl ? `<${taskUrl}|Open in ClickUp →>` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  try {
+    const res = await fetch("https://slack.com/api/chat.postMessage", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json; charset=utf-8",
+      },
+      body: JSON.stringify({ channel, text, unfurl_links: false }),
+    });
+    const body = (await res.json()) as { ok?: boolean; error?: string };
+    if (!body.ok) {
+      return `Slack ${body.error || res.status}`;
+    }
+    return undefined;
+  } catch (err) {
+    return err instanceof Error ? err.message : "Unknown Slack error";
+  }
+}
+
 export const submitLead = createServerFn({ method: "POST" })
   .inputValidator((input: unknown) => leadSchema.parse(input))
   .handler(async ({ data }) => {
     // Create ClickUp task first (so we can store its id with the lead)
     const clickup = await createClickUpTask(data);
 
+    // Fire Slack notification immediately so Dawn sees new leads
+    // regardless of PDF outcome. Non-fatal: Slack errors are logged
+    // alongside PDF errors below.
+    const slackError = await notifySlackNewLead(data, clickup.id);
+
     // Generate the PDF of the submission
     let pdfBytes: Uint8Array | null = null;
     let pdfPath: string | null = null;
     const pdfErrors: string[] = [];
+    if (slackError) pdfErrors.push(`Slack: ${slackError}`);
     try {
       pdfBytes = await buildLeadPdf(data);
     } catch (err) {

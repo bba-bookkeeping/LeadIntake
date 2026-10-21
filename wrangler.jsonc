@@ -4,4 +4,7 @@
   "compatibility_date": "2025-09-24",
   "compatibility_flags": ["nodejs_compat"],
   "main": "src/server.ts",
+  "vars": {
+    "SLACK_NEW_LEADS_CHANNEL": "D0BT9KKT6C9"
+  }
 }
